@@ -1,144 +1,165 @@
-import sqlite3
-import re
 import sys
-from typing import Callable
+import sqlite3
 
-def connect_to_database() -> sqlite3.Connection:
-    """
-    Подключение к базе данных SQLite.
-    """
-    conn = sqlite3.connect('library.db')
-    cursor = conn.cursor()
+DB_FILE = 'polyprofi.db'  # Файл базы данных
 
-    # Создание таблицы в базе данных, если она не существует
-    cursor.execute('''CREATE TABLE IF NOT EXISTS books
-                     (title TEXT, author TEXT, year TEXT, genre TEXT)''')
-    conn.commit()
+def create_connection():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        return conn
+    except sqlite3.Error as e:
+        print("Ошибка при подключении к базе данных:", e)
+        sys.exit()
 
-    return conn
+def create_tables(conn):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS books (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            author TEXT NOT NULL,
+            description TEXT,
+            genre_id INTEGER,
+            FOREIGN KEY (genre_id) REFERENCES genres(id)
+        )
+        ''')
 
-def add_book(conn: sqlite3.Connection, title: str, author: str, year: str, genre: str):
-    """
-    Добавление новой книги в библиотеку.
-    """
-    # Проверка на безопасность переданных данных
-    if not all(re.match(r'^[a-zA-Z0-9\s]+$', data) for data in (title, author, year, genre)):
-        print("Некорректные данные. Попробуйте снова.")
-        return
-    
-    # Добавление новой книги в базу данных
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO books VALUES (?, ?, ?, ?)", (title, author, year, genre))
-    conn.commit()
-    print("Книга успешно добавлена в библиотеку.")
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS genres (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL
+        )
+        ''')
 
-def search_books(conn: sqlite3.Connection, title: str):
-    """
-    Поиск книги по названию.
-    """
-    # Проверка на безопасность переданного названия книги
-    if not re.match(r'^[a-zA-Z0-9\s]+$', title):
-        print("Некорректное название книги. Попробуйте снова.")
-        return
+        conn.commit()
+        cursor.close()
+    except sqlite3.Error as e:
+        print("Ошибка при создании таблиц базы данных:", e)
+        conn.close()
+        sys.exit()
 
-    # Поиск книги в базе данных
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM books WHERE title=?", (title,))
-    books = cursor.fetchall()
+def add_book(conn, title, author, description, genre):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO genres (name) VALUES (?)', (genre,))
+        genre_id = cursor.lastrowid
+        cursor.execute('INSERT INTO books (title, author, description, genre_id) VALUES (?, ?, ?, ?)', (title, author, description, genre_id))
+        conn.commit()
+        cursor.close()
+        print("Книга добавлена успешно!")
+    except sqlite3.Error as e:
+        print("Ошибка при добавлении книги:", e)
 
-    if len(books) == 0:
-        print(f"Книга с названием '{title}' не найдена.")
-    else:
-        print(f"Найдены книги с названием '{title}':")
-        for book in books:
-            print(f"Название: {book[0]}, Автор: {book[1]}, Год: {book[2]}, Жанр: {book[3]}")
+def view_books(conn):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT b.title, b.author FROM books AS b')
+        books = cursor.fetchall()
+        for book in books:
+            print("Название:", book[0])
+            print("Автор:", book[1])
+            print("----------")
+        if len(books) < 1:
+            print("На данный момент книг в базе нет.")
+        cursor.close()
+    except sqlite3.Error as e:
+        print("Ошибка при просмотре книг:", e)
 
-def delete_book(conn: sqlite3.Connection, title: str):
-    """
-    Удаление книги из библиотеки по названию.
-    """
-    # Проверка на безопасность переданного названия книги
-    if not re.match(r'^[a-zA-Z0-9\s]+$', title):
-        print("Некорректное название книги. Попробуйте снова.")
-        return
+def view_books_by_genre(conn, genre):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT b.title, b.author FROM books AS b, genres AS g WHERE b.genre_id = g.id AND g.name = ?', (genre,))
+        books = cursor.fetchall()
+        for book in books:
+            print("Название:", book[0])
+            print("Автор:", book[1])
+            print("----------")
+        if len(books) < 1:
+            print("На данный момент книг в данном жанре нет.")
+        cursor.close()
+    except sqlite3.Error as e:
+        print("Ошибка при просмотре книг по жанру:", e)
 
-    # Удаление книги из базы данных
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM books WHERE title=?", (title,))
-    conn.commit()
-    print(f"Книга с названием '{title}' успешно удалена из библиотеки.")
+def search_books(conn, keyword):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('SELECT title, author FROM books WHERE title LIKE ? OR author LIKE ?', ('%'+keyword+'%', '%'+keyword+'%'))
+        books = cursor.fetchall()
+        for book in books:
+            print("Название:", book[0])
+            print("Автор:", book[1])
+            print("----------")
+        if len(books) < 1:
+            print("По вашему запросу не найдено книг.")
+        cursor.close()
+    except sqlite3.Error as e:
+        print("Ошибка при поиске книги:", e)
 
-def display_books(conn: sqlite3.Connection):
-    """
-    Выводит список всех книг в библиотеке.
-    """
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM books")
-    books = cursor.fetchall()
-
-    if not books:
-        print("Библиотека пуста.")
-    else:
-        print("Список книг в библиотеке:")
-        for book in books:
-            print(f"Название: {book[0]}, Автор: {book[1]}, Год: {book[2]}, Жанр: {book[3]}")
-
-def exit_program(conn: sqlite3.Connection):
-    """
-    Выход из программы и закрытие подключения к базе данных.
-    """
-    print("Выход из программы.")
-    # Закрытие подключения к базе данных SQLite
-    conn.close()
-    sys.exit()
+def delete_book(conn, title):
+    try:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM books WHERE title = ?', (title,))
+        conn.commit()
+        cursor.close()
+        print("Книга удалена успешно!")
+    except sqlite3.Error as e:
+        print("Ошибка при удалении книги:", e)
 
 def main():
-    """
-    Осуществление взаимодействия с пользователем и управление программой.
-    """
-    conn = connect_to_database()
+    conn = create_connection()
+    create_tables(conn)
 
-    def add():
-        add_book(conn, input("Введите название книги: "),
-                 input("Введите автора книги: "),
-                 input("Введите год публикации книги: "),
-                 input("Введите жанр книги: "))
+    while True:
+        print("""
+        Выберите действие:
+        1. Добавить книгу
+        2. Просмотреть все книги
+        3. Просмотреть книги по жанру
+        
+        4. Поиск книги
+        5. Удалить книгу
+        6. Выйти из программы
+        """)
 
-    def search():
-        search_books(conn, input("Введите название книги для поиска: "))
+        choice = input("Введите номер действия: ")
 
-    def delete():
-        delete_book(conn, input("Введите название книги для удаления: "))
+        if choice == "1":
+            try:
+                title = input("Введите название книги: ")
+                author = input("Введите автора книги: ")
+                description = input("Введите описание книги: ")
+                genre = input("Введите жанр книги: ")
+                add_book(conn, title, author, description, genre)
+            except KeyboardInterrupt:
+                print("\nОтменено.")
+        elif choice == "2":
+            view_books(conn)
+        elif choice == "3":
+            try:
+                genre = input("Введите жанр книги: ")
+                view_books_by_genre(conn, genre)
+            except KeyboardInterrupt:
+                print("\nОтменено.")
+        elif choice == "4":
+            try:
+                keyword = input("Введите ключевое слово для поиска: ")
+                search_books(conn, keyword)
+            except KeyboardInterrupt:
+                print("\nОтменено.")
+        elif choice == "5":
+            try:
+                title = input("Введите название книги для удаления: ")
+                delete_book(conn, title)
+            except KeyboardInterrupt:
+                print("\nОтменено.")
+        elif choice == "6":
+            print("Выход из программы...")
+            break
+        else:
+            print("Неверный выбор. Попробуйте еще раз.")
 
-    def display():
-        display_books(conn)
+    conn.close()
 
-    def exit_program():
-        exit_program(conn)
-
-    options = {
-        '1': add,
-        '2': search,
-        '3': delete,
-        '4': display,
-        '5': exit_program
-    }
-
-    while True:
-        print("1. Добавить книгу")
-        print("2. Поиск книги")
-        print("3. Удалить книгу")
-        print("4. Просмотреть список книг")
-        print("5. Выход")
-        choice = input("Введите ваш выбор: ")
-
-        func = options.get(choice)
-        if func:
-            func()
-            input("Нажмите Enter для продолжения...")
-            print("\n" * 100)  # Очистка консоли
-        else:
-            print("Неправильный выбор. Попробуйте снова.")
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    main()
